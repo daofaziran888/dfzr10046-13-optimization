@@ -91,8 +91,26 @@ def create_entry(module: str, payload: EntryPayload) -> ActionResult:
     return ActionResult(ok=True, message=f"{service.ENTITY}已登记", entry=entry)
 
 
-@router.post("/{module}/{entry_id}/actions", response_model=ActionResult)
-def run_action(module: str, entry_id: int, payload: ActionPayload) -> ActionResult:
+@router.post("/{module}/{entry_id}/actions")
+def run_action(module: str, entry_id: int, payload: ActionPayload):
     service = require_service(module)
-    entry, message = service.run_action(entry_id, payload.action.strip())
+    action = payload.action.strip()
+    extra = payload.model_extra or {}
+
+    # 兼容“在通用动作口上发批量确认”的调用：body 带 ids 即走整批语义。
+    batch_actions = {"批量确认", "批量确认抽取", "batch_confirm", "batch-confirm",
+                     "confirm_batch", "confirm_selected"}
+    if action in batch_actions and hasattr(service, "batch_confirm"):
+        ids = extra.get("ids") or extra.get("entry_ids") or extra.get("selected_ids")
+        if ids is not None:
+            from fastapi.responses import JSONResponse
+
+            from app.services.results import plain_dict
+            result = service.batch_confirm(
+                ids, batch_no=extra.get("batch_no"), owner=extra.get("owner", "源端抽取页"),
+                **{k: v for k, v in extra.items()
+                   if k not in {"ids", "entry_ids", "selected_ids", "batch_no", "owner"}})
+            return JSONResponse(plain_dict(result))
+
+    entry, message = service.run_action(entry_id, action)
     return ActionResult(ok=entry is not None, message=message, entry=entry)

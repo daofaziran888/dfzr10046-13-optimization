@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 from app.seed import SEED_ROWS
@@ -14,6 +15,8 @@ class Store:
         self._tables: dict[str, list[dict[str, Any]]] = {
             name: [dict(row) for row in rows] for name, rows in SEED_ROWS.items()
         }
+        # 跨窗口并发确认/接收时，用同一把进程内锁保证“读取资格→流转状态→写待办”原子。
+        self.lock = threading.RLock()
 
     def module_names(self) -> list[str]:
         return sorted(self._tables)

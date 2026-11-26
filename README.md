@@ -81,5 +81,28 @@ npm run dev
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
 
+## 源端抽取：批量确认与装载窗口交班
+
+- 抽取页支持多选，整组编号作为一次提交范围：`POST /api/src_extract/batch-confirm`
+  （同义路径 `/batch_confirm`、`/confirm-batch`、`/confirm`、`/batch`），
+  body：`{ "ids": [1, 2, 3], "batch_no": "CFM-..." }`。响应逐条给出
+  `results[].outcome`：`confirmed / already_confirmed / occupied / pending / failed / not_found`，
+  并汇总 `success_ids / failed_ids / occupied_ids / remaining_ids`。
+- 批量确认只发一次请求、成功后只刷新一次列表；相同参数的在途列表请求会合并。
+  失败项用 `POST /api/src_extract/retry-failed`（或页面“重试未成功余项”）恢复。
+- 确认成功（含被另一窗口先确认）的编号幂等写入装载窗口待办：
+  `GET /api/load_window/todos`、`GET /api/load_window/handovers/{batch_no}`、
+  `POST /api/load_window/receive`、`GET /api/load_window/inspect/{id或抽取编号}`。
+- 交班结论：轮次未收齐时 `can_load=false`，装载员“可先接收，但须等本轮收齐后方可执行装载”；
+  全部编号确认后 `can_load=true`，提示“可直接开装载”。最终
+  `handover.received_ids == result.success_ids`。
+- 并发：store 锁 + 行级认领（`SrcExtractService.claim_entry`）保证已确认项不重复操作；
+  `GET /api/src_extract/eligible` 与 `GET /api/src_extract/remaining?batch_no=...`
+  在重开后按当前资格列出余项。批量接口支持 `delayed_ids` + `delay`（或注入 `sender`）
+  确定性模拟回包延迟，阻塞调用在线程池执行，不挡住装载班的并发查询。
+- 既有逐笔动作 `POST /api/src_extract/{id}/actions {"action":"确认抽取"}` 保持兼容，
+  同样会写一条 `SINGLE-{id}` 装载待办。
+
+
 领域：数据工程
 子方向：数仓与数据湖
